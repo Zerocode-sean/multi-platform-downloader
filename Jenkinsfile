@@ -73,16 +73,16 @@ pipeline {
       }
     }
     stage('Push Image') {
-      when { expression { env.REGISTRY_USR != null } }, value: '' , not { environment name: 'REGISTRY', value: '' } } }
-      steps {
-        script {
-          def tag = "${env.BUILD_NUMBER}".trim()
-          sh "docker tag ${IMAGE_NAME}:${tag} $REGISTRY_USR/${IMAGE_NAME}:${tag}"
-          sh "docker login -u $REGISTRY_USR -p $REGISTRY_PSW"
-          sh "docker push $REGISTRY_USR/${IMAGE_NAME}:${tag}"
-        }
-      }
+  when { expression { env.REGISTRY_USR != null } }  // Runs only if DockerHub creds exist
+  steps {
+    script {
+      def tag = "${env.BUILD_NUMBER}".trim()
+      sh "docker tag ${IMAGE_NAME}:${tag} ${REGISTRY_USR}/${IMAGE_NAME}:${tag}"
+      sh "docker login -u ${REGISTRY_USR} -p ${REGISTRY_PSW}"
+      sh "docker push ${REGISTRY_USR}/${IMAGE_NAME}:${tag}"
     }
+  }
+}
   }
   post {
     always {
