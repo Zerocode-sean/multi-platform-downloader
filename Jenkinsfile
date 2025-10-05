@@ -1,8 +1,9 @@
 pipeline {
   agent any
   environment {
-    IMAGE_NAME = "multi-platform-downloader"
-    REGISTRY = credentials('dockerhub-credentials') // optional; define in Jenkins or remove push stage
+  IMAGE_NAME = "multi-platform-downloader"
+  REGISTRY = "docker.io"  // Or leave empty; creds inject USR/PSW
+}
   }
   options {
     timestamps()
@@ -17,12 +18,12 @@ pipeline {
     }
     stage('Set up Python') {
       steps {
-        sh '''
-        python -m venv venv
-        . venv/bin/activate
-        pip install --upgrade pip
-        pip install -r requirements.txt
-        '''
+        bat '''
+          python -m venv venv
+          venv\\Scripts\\activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          '''
       }
     }
     stage('Lint') {
@@ -72,7 +73,7 @@ pipeline {
       }
     }
     stage('Push Image') {
-      when { allOf { environment name: 'REGISTRY', value: '' , not { environment name: 'REGISTRY', value: '' } } }
+      when { expression { env.REGISTRY_USR != null } }, value: '' , not { environment name: 'REGISTRY', value: '' } } }
       steps {
         script {
           def tag = "${env.BUILD_NUMBER}".trim()
