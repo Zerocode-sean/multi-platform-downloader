@@ -22,3 +22,4 @@ echo "htmlcov/" >> .gitignore
 echo "node_modules/" >> .gitignore
 echo "*.tar" >> .gitignore
 git add .gitignore
+.venv/
