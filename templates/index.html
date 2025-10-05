@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Multi Platform Downloader</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="stylesheet" href="/static/style.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* Minimal extra overrides for new layout */
+#previewCard{padding:.75rem;height:100%;display:flex;flex-direction:column}
+#previewCard .media-wrapper{position:relative;width:100%;flex:1;display:flex;align-items:center;justify-content:center;background:#000;border-radius:12px;overflow:hidden}
+#previewCard video,#previewCard .embed-wrap{width:100%;height:100%;object-fit:cover}
+#previewCard .embed-wrap{position:relative;padding-top:56.25%;width:100%;height:auto}
+#previewCard .embed-wrap iframe{position:absolute;inset:0;width:100%;height:100%}
+#previewCard .title-bar{position:absolute;left:0;right:0;bottom:0;background:linear-gradient(to top,rgba(0,0,0,.65),rgba(0,0,0,0));padding:1.1rem .9rem .6rem;color:#fff;font-size:.9rem;font-weight:600;line-height:1.25;max-height:55%;overflow:hidden}
+#previewPlaceholder{display:flex;align-items:center;justify-content:center;text-align:center;color:var(--muted);font-size:.85rem;padding:1rem}
+.details-card{margin-top:1rem}
+.details-meta{display:flex;flex-wrap:wrap;gap:.8rem;font-size:.7rem;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);font-weight:600;margin-bottom:.4rem}
+.details-title{display:none} /* Title moved into overlay */
+.progress-wrap{margin-top:1rem;width:100%;display:none;flex-direction:column;gap:.4rem}
+.progress-bar{position:relative;height:10px;background:#1f2b38;border-radius:6px;overflow:hidden}
+.progress-bar span{position:absolute;left:0;top:0;height:100%;width:0;background:linear-gradient(90deg,#3b82f6,#6366f1);transition:width .25s ease}
+.progress-meta{display:flex;justify-content:space-between;font-size:.65rem;color:var(--muted);font-weight:500}
+.job-finished{color:#4ade80}
+.job-error{color:#f87171}
+.cancel-btn{background:#b91c1c!important}
+.cancel-btn:hover{background:#dc2626!important}
+.status-canceled{color:#f87171;font-weight:600}
+.status-canceling{color:#fbbf24;font-weight:600}
+</style>
+</head>
+<body>
+<header class="gradient">
+  <h1>Multi Platform Downloader</h1>
+  <p>Unified downloader with instant preview. Supports TikTok, YouTube, Instagram.</p>
+</header>
+<main>
+  <div class="grid">
+    <div class="card input-card">
+      <label for="url" class="field-label">Video URL</label>
+      <div class="input-row">
+        <input type="text" id="url" placeholder="Paste a TikTok / YouTube / Instagram link" value="{{ url }}" autocomplete="off" />
+        <button id="clearBtn" title="Clear">✕</button>
+      </div>
+      <p id="status" class="status muted">Waiting for URL...</p>
+      <div id="formatBar" class="hidden">
+        <label>Format
+          <select id="formatSelect">
+            <option value="best">Best (1080p)</option>
+            <option value="720p">720p</option>
+            <option value="audio">Audio (MP3)</option>
+          </select>
+        </label>
+        <button id="downloadBtn" disabled>Download</button>
+        <button id="cancelBtn" class="cancel-btn" style="display:none">Cancel</button>
+      </div>
+      <div class="progress-wrap" id="progressWrap">
+        <div class="progress-bar"><span id="progressFill"></span></div>
+        <div class="progress-meta" id="progressMeta"><span>0%</span><span></span></div>
+      </div>
+    </div>
+
+    <div class="card preview-card" id="previewCard">
+      <div id="previewContent" class="media-wrapper">
+        <div id="previewPlaceholder">Paste a supported link to auto-load preview.</div>
+      </div>
+    </div>
+  </div>
+  <div class="card details-card hidden" id="detailsCard">
+    <div class="details-meta" id="detailsMeta"></div>
+    <div class="details-body" id="detailsBody"></div>
+  </div>
+</main>
+<footer>
+  <p>&copy; 2025 Multi Platform Downloader • Built with FastAPI + yt-dlp</p>
+</footer>
+<script>
+const urlInput=document.getElementById('url');
+const statusEl=document.getElementById('status');
+const previewContent=document.getElementById('previewContent');
+const downloadBtn=document.getElementById('downloadBtn');
+const cancelBtn=document.getElementById('cancelBtn');
+const formatSelect=document.getElementById('formatSelect');
+const formatBar=document.getElementById('formatBar');
+const clearBtn=document.getElementById('clearBtn');
+const detailsCard=document.getElementById('detailsCard');
+const detailsMeta=document.getElementById('detailsMeta');
+const detailsBody=document.getElementById('detailsBody');
+const progressWrap=document.getElementById('progressWrap');
+const progressFill=document.getElementById('progressFill');
+const progressMeta=document.getElementById('progressMeta');
+let lastValue='';let pendingController=null;let metaCache={};let activeJob=null;let pollTimer=null;let canceled=false;let cancelInFlight=false;
+
+function platformIcon(p){if(!p)return'';const map={tiktok:'🎵',youtube:'▶️',instagram:'📸'};return map[p]||'📹';}
+function debounce(fn,ms){let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);};}
+function formatDuration(sec){if(!sec)return'';const m=Math.floor(sec/60);const s=Math.floor(sec%60);return `${m}:${s.toString().padStart(2,'0')}`;}
+function formatSize(bytes){if(!bytes)return'';const u=['B','KB','MB','GB','TB'];let i=0,v=bytes;while(v>1024&&i<u.length-1){v/=1024;i++;}return v.toFixed(i>1?1:0)+' '+u[i];}
+function escapeHtml(str){return str.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));}
+
+async function fetchPreview(u){if(pendingController)pendingController.abort();pendingController=new AbortController();statusEl.textContent='Fetching preview...';try{const res=await fetch(`/api/preview?url=${encodeURIComponent(u)}`,{signal:pendingController.signal});if(!res.ok)throw new Error('HTTP '+res.status);const data=await res.json();if(urlInput.value.trim()!==u)return;if(!data.ok){renderEmpty('No preview available.');return;}metaCache[u]=data.preview;renderPreview(data.preview,u);}catch(e){if(e.name==='AbortError')return;renderEmpty('Error: '+e.message);} }
+function renderEmpty(msg){previewContent.innerHTML=`<div id='previewPlaceholder'>${msg}</div>`;detailsCard.classList.add('hidden');downloadBtn.disabled=true;formatBar.classList.add('hidden');statusEl.textContent='Preview failed';}
+
+function renderPreview(meta,url){const {title,thumbnail,preview_url,embed_url,video_type,platform,duration,filesize}=meta;let mediaHTML='';if(video_type==='video'&&preview_url){mediaHTML=`<video class='player' controls poster='${thumbnail||''}'><source src='${preview_url}'></video>`;}else if(embed_url){mediaHTML=`<div class='embed-wrap'><iframe src='${embed_url}' frameborder='0' allowfullscreen loading='lazy'></iframe></div>`;}else{mediaHTML='<div id="previewPlaceholder">No playable preview.</div>';}previewContent.innerHTML=`<div class='media-wrapper-inner' style='position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center;'>${mediaHTML}${title?`<div class='title-bar'>${escapeHtml(title)}</div>`:''}</div>`;const metaBadges=[];if(platform)metaBadges.push(`${platformIcon(platform)} ${platform}`);if(duration)metaBadges.push(`⏱ ${formatDuration(duration)}`);if(filesize)metaBadges.push(`💾 ${formatSize(filesize)}`);detailsMeta.innerHTML=metaBadges.map(b=>`<span>${b}</span>`).join('');detailsBody.innerHTML='<small class="muted">Confirm the preview then click Download.</small>';if(metaBadges.length||title){detailsCard.classList.remove('hidden');}else{detailsCard.classList.add('hidden');}statusEl.textContent='Preview ready';downloadBtn.disabled=false;formatBar.classList.remove('hidden');}
+
+const debounced=debounce(()=>{const v=urlInput.value.trim();if(!v){statusEl.textContent='Waiting for URL...';renderEmpty('Paste a supported link to auto-load preview.');return;}if(v===lastValue)return;lastValue=v;fetchPreview(v);},600);
+urlInput.addEventListener('input',debounced);
+clearBtn.addEventListener('click',()=>{urlInput.value='';lastValue='';debounced();urlInput.focus();});
+
+async function startDownload(){const u=urlInput.value.trim();if(!u)return;downloadBtn.disabled=true;cancelBtn.style.display='inline-flex';canceled=false;downloadBtn.textContent='Starting...';progressWrap.style.display='flex';progressFill.style.width='0%';progressMeta.children[0].textContent='0%';progressMeta.children[1].textContent='';try{const form=new FormData();form.append('url',u);form.append('format',formatSelect.value);const res=await fetch('/api/start_download',{method:'POST',body:form});const data=await res.json();if(!data.ok) throw new Error(data.error||'Failed to start job');activeJob=data.job_id;downloadBtn.textContent='Downloading...';pollJob();}catch(e){alert(e.message);downloadBtn.textContent='Download';downloadBtn.disabled=false;cancelBtn.style.display='none';}}
+
+async function pollJob(){if(!activeJob)return;try{const res=await fetch(`/api/job/${activeJob}`);const data=await res.json();if(!data.ok)throw new Error(data.error||'Job error');const job=data.job;updateProgress(job);if(['finished','error','canceled'].includes(job.status)){if(job.status==='finished'){downloadBtn.textContent='Done';progressMeta.children[1].innerHTML='<span class="job-finished">Finished</span>';fetchFile(job);}else if(job.status==='canceled'){downloadBtn.textContent='Canceled';progressMeta.children[1].innerHTML='<span class="status-canceled">Canceled</span>';setTimeout(()=>location.reload(),800);}else{downloadBtn.textContent='Retry';progressMeta.children[1].innerHTML='<span class="job-error">'+(job.error||'Error')+'</span>';}downloadBtn.disabled=false;cancelBtn.style.display='none';activeJob=null;cancelInFlight=false;return;}else if(job.status==='canceling'){progressMeta.children[1].innerHTML='<span class="status-canceling">Canceling...</span>';}pollTimer=setTimeout(pollJob,800);}catch(e){progressMeta.children[1].innerHTML='<span class="job-error">'+e.message+'</span>';downloadBtn.textContent='Retry';downloadBtn.disabled=false;cancelBtn.style.display='none';activeJob=null;cancelInFlight=false;}}
+
+async function cancelDownload(){if(!activeJob||cancelInFlight)return;cancelInFlight=true;cancelBtn.disabled=true;cancelBtn.textContent='Canceling...';try{const res=await fetch(`/api/job/${activeJob}/cancel`,{method:'POST'});await res.json();progressMeta.children[1].innerHTML='<span class="status-canceling">Canceling...</span>';downloadBtn.textContent='Canceling...';}catch(e){progressMeta.children[1].innerHTML='<span class="job-error">Cancel failed</span>';downloadBtn.textContent='Retry';cancelBtn.style.display='none';activeJob=null;cancelInFlight=false;return;} // keep polling until worker marks canceled
+if(!pollTimer) pollJob();}
+
+function updateProgress(job){if(job.percent!=null){progressFill.style.width=(job.percent.toFixed(1))+'%';progressMeta.children[0].textContent=(job.percent.toFixed(1))+'%';}if(job.speed){progressMeta.children[1].textContent=`${(job.speed/1024/1024).toFixed(2)} MB/s`;}}
+
+async function fetchFile(job){try{const res=await fetch(`/api/job/${job.id}/file`);if(!res.ok) throw new Error('File not ready');const blob=await res.blob();let fname='download.'+(job.ext||'bin');const cd=res.headers.get('Content-Disposition')||'';const m=cd.match(/filename="?([^";]+)"?/i);if(m)fname=m[1];const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=fname;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),4000);}catch(e){alert('Download retrieval failed: '+e.message);}}
+
+downloadBtn.addEventListener('click',startDownload);
+cancelBtn.addEventListener('click',cancelDownload);
+window.addEventListener('load',()=>{if(urlInput.value.trim()){fetchPreview(urlInput.value.trim());}});
+</script>
+</body>
+</html>
